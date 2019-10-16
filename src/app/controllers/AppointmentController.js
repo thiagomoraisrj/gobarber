@@ -1,8 +1,11 @@
 import * as Yup from 'yup';
-import { startOfHour, parseISO, isBefore } from 'date-fns';
+import { startOfHour, parseISO, isBefore, format, subHours } from 'date-fns';
+import pt from 'date-fns/locale/pt-BR';
 import Appointment from '../models/Appointment';
 import File from '../models/File';
 import User from '../models/User';
+import Notification from '../schemas/Notification';
+import app from '../../app';
 
 class AppointmentController {
   async index(req, res) {
@@ -45,6 +48,12 @@ class AppointmentController {
 
     const { provider_id, date } = req.body;
 
+    if (provider_id == req.userId) {
+      return res
+        .status(401)
+        .json({ error: 'Cannot create appointment like same provider' });
+    }
+
     const checkIsProvider = await User.findOne({
       where: { id: provider_id, provider: true },
     });
@@ -78,6 +87,43 @@ class AppointmentController {
       provider_id,
       date: hourStart,
     });
+
+    const user = await User.findByPk(req.userId);
+
+    const formattedDate = format(
+      hourStart,
+      "'dia' dd 'de' MMMM', às' H:mm'h'",
+      { locale: pt }
+    );
+
+    await Notification.create({
+      content: `Novo agendamento de ${user.name} para ${formattedDate}`,
+      user: provider_id,
+    });
+
+    return res.json(appointment);
+  }
+
+  async delete(req, res) {
+    const appointment = await Appointment.findByPk(req.params.id);
+
+    if (appointment.user_id !== req.userId) {
+      return res.json(401).json({
+        error: "You don' t have permission to cancel this appointment",
+      });
+    }
+
+    const dateWithSub = subHours(appointment.date, 2);
+
+    if ((isBefore(dateWithSub), new Date())) {
+      return res
+        .status(401)
+        .json({ error: 'You can\t cancel appointment 2 hours in advance' });
+    }
+
+    appointment.canceled_at = new Date();
+
+    await appointment.save();
 
     return res.json(appointment);
   }
